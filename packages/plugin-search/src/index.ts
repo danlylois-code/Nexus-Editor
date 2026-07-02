@@ -27,6 +27,13 @@ export interface SearchOptions {
   caseSensitive?: boolean;
   wholeWord?: boolean;
   regexp?: boolean;
+  /**
+   * Enable fuzzy matching. Each character in the query must appear in the
+   * matched text in order, with any number of characters in between.
+   * When true, regexp and wholeWord are ignored — fuzzy uses its own
+   * pattern generation.
+   */
+  fuzzy?: boolean;
 }
 
 export interface SearchHistoryStorage {
@@ -72,6 +79,7 @@ export interface SearchPluginLabels {
   matchCase: string;
   regexp: string;
   byWord: string;
+  fuzzy: string;
   replaceNext: string;
   replaceAll: string;
   close: string;
@@ -88,6 +96,7 @@ const DEFAULT_LABELS: SearchPluginLabels = {
   matchCase: "Match case",
   regexp: "Regexp",
   byWord: "By word",
+  fuzzy: "Fuzzy",
   replaceNext: "Replace",
   replaceAll: "Replace all",
   close: "Close"
@@ -232,7 +241,27 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+// Non-greedy character-by-character matching: each query char is
+// individually escaped and joined with .*? so the regex engine finds
+// the shortest span that contains all chars in order.
+function fuzzyToPattern(query: string, caseSensitive: boolean): RegExp | null {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+
+  const chars: string[] = [];
+  for (let i = 0; i < trimmed.length; i++) {
+    chars.push(escapeRegExp(trimmed[i]));
+  }
+
+  const flags = caseSensitive ? "g" : "gi";
+  return new RegExp(chars.join(".*?"), flags);
+}
+
 function buildSearchPattern(query: string, options: SearchOptions = {}): RegExp | null {
+  if (options.fuzzy) {
+    return fuzzyToPattern(query, options.caseSensitive ?? false);
+  }
+
   const flags = options.caseSensitive ? "g" : "gi";
 
   let pattern: string;
@@ -321,6 +350,7 @@ function resolveLabels(view: EditorView, labels: Partial<SearchPluginLabels> | u
     matchCase: resolveLabel(view, labels, "matchCase", DEFAULT_LABELS.matchCase),
     regexp: resolveLabel(view, labels, "regexp", DEFAULT_LABELS.regexp),
     byWord: resolveLabel(view, labels, "byWord", DEFAULT_LABELS.byWord),
+    fuzzy: resolveLabel(view, labels, "fuzzy", DEFAULT_LABELS.fuzzy),
     replaceNext: resolveLabel(view, labels, "replaceNext", DEFAULT_LABELS.replaceNext),
     replaceAll: resolveLabel(view, labels, "replaceAll", DEFAULT_LABELS.replaceAll),
     close: resolveLabel(view, labels, "close", DEFAULT_LABELS.close)
@@ -500,6 +530,7 @@ class NexusSearchPanel implements Panel {
   private readonly caseField: HTMLInputElement;
   private readonly regexpField: HTMLInputElement;
   private readonly wholeWordField: HTMLInputElement;
+  private readonly fuzzyField: HTMLInputElement;
   private readonly labels: SearchPluginLabels;
   private readonly history: SearchHistoryController;
   private readonly replaceRow?: HTMLDivElement;
@@ -534,6 +565,11 @@ class NexusSearchPanel implements Panel {
     this.caseField = this.createCheckbox("markdown-search-case-toggle", "case", this.query.caseSensitive);
     this.regexpField = this.createCheckbox("markdown-search-regexp-toggle", "re", this.query.regexp);
     this.wholeWordField = this.createCheckbox("markdown-search-word-toggle", "word", this.query.wholeWord);
+    this.fuzzyField = this.createCheckbox(
+      "markdown-search-fuzzy-toggle",
+      "fuzzy",
+      false
+    );
 
     this.dom = document.createElement("div");
     this.dom.className = "cm-search nexus-search-panel";
@@ -570,6 +606,7 @@ class NexusSearchPanel implements Panel {
       createLabel(this.caseField, resolvedLabels.matchCase),
       createLabel(this.regexpField, resolvedLabels.regexp),
       createLabel(this.wholeWordField, resolvedLabels.byWord),
+      createLabel(this.fuzzyField, resolvedLabels.fuzzy),
       navigationGroup
     ];
     if (this.replaceToggle) {
@@ -664,11 +701,26 @@ class NexusSearchPanel implements Panel {
   }
 
   private commit(): void {
+    let searchValue = this.searchField.value;
+    let regexp = this.regexpField.checked;
+    let wholeWord = this.wholeWordField.checked;
+
+    // When fuzzy is enabled, convert the query to a regex so CM6's
+    // existing regex search infrastructure performs the matching.
+    if (this.fuzzyField.checked && searchValue.trim()) {
+      const pattern = fuzzyToPattern(searchValue, this.caseField.checked);
+      if (pattern) {
+        searchValue = pattern.source;
+        regexp = true;
+        wholeWord = false;
+      }
+    }
+
     const query = new SearchQuery({
-      search: this.searchField.value,
+      search: searchValue,
       caseSensitive: this.caseField.checked,
-      regexp: this.regexpField.checked,
-      wholeWord: this.wholeWordField.checked,
+      regexp,
+      wholeWord,
       replace: this.replaceField.value
     });
 
@@ -746,6 +798,9 @@ class NexusSearchPanel implements Panel {
     this.caseField.checked = query.caseSensitive;
     this.regexpField.checked = query.regexp;
     this.wholeWordField.checked = query.wholeWord;
+    // Fuzzy is Nexus-level state — CM6 queries don't carry it, so reset
+    // when the query is externally updated (e.g. via keyboard shortcuts).
+    this.fuzzyField.checked = false;
   }
 }
 

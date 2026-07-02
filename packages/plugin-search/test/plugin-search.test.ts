@@ -566,6 +566,214 @@ describe("@floatboat/nexus-plugin-search", () => {
     harness.destroy();
   });
 
+  it("finds fuzzy matches where query characters appear in order", () => {
+    expect(findSearchMatches("NexusEditor markdown tool", "ne", { fuzzy: true })).toEqual([
+      { from: 0, to: 2, text: "Ne" },
+    ]);
+  });
+
+  it("handles fuzzy search case-insensitively by default", () => {
+    expect(findSearchMatches("FooBar FIZZBUZZ", "fb", { fuzzy: true })).toEqual([
+      { from: 0, to: 4, text: "FooB" },
+      { from: 7, to: 12, text: "FIZZB" },
+    ]);
+  });
+
+  it("supports case-sensitive fuzzy matching", () => {
+    expect(findSearchMatches("FooBar fooBar", "FB", { fuzzy: true, caseSensitive: true })).toEqual([
+      { from: 0, to: 4, text: "FooB" },
+    ]);
+  });
+
+  it("matches consecutive identical characters in fuzzy mode", () => {
+    expect(findSearchMatches("bookkeeper", "oo", { fuzzy: true })).toEqual([
+      { from: 1, to: 3, text: "oo" },
+    ]);
+  });
+
+  it("returns empty for fuzzy query not matching any text", () => {
+    expect(findSearchMatches("hello world", "xyz", { fuzzy: true })).toEqual([]);
+  });
+
+  it("returns empty for empty fuzzy query", () => {
+    expect(findSearchMatches("hello world", "", { fuzzy: true })).toEqual([]);
+  });
+
+  it("returns empty for whitespace-only fuzzy query", () => {
+    expect(findSearchMatches("hello world", "   ", { fuzzy: true })).toEqual([]);
+  });
+
+  it("escapes regex-special characters in fuzzy query", () => {
+    expect(findSearchMatches("hello.world hello*world", ".*", { fuzzy: true })).toEqual([
+      { from: 5, to: 18, text: ".world hello*" },
+    ]);
+  });
+
+  it("replaces with fuzzy matching", () => {
+    expect(replaceAllMatches("NexusEditor markdown", "ne", "XX", { fuzzy: true })).toBe(
+      "XXxusEditor markdown"
+    );
+  });
+
+  it("fuzzy mode ignores wholeWord and regexp options", () => {
+    expect(findSearchMatches("foo bar baz qux", "br", {
+      fuzzy: true,
+      wholeWord: true,
+      regexp: true,
+    })).toEqual([
+      { from: 4, to: 7, text: "bar" },
+    ]);
+  });
+
+  it("renders a fuzzy toggle checkbox in the search panel", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const editor = createEditor({
+      container,
+      initialValue: "alpha beta gamma",
+      plugins: [createSearchPlugin()],
+    });
+
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    content?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "f",
+        code: "KeyF",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    if (!container.querySelector('[data-test-id="markdown-search-bar"]')) {
+      content?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          code: "KeyF",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    }
+
+    const fuzzyCheckbox = container.querySelector<HTMLInputElement>(
+      '[data-test-id="markdown-search-fuzzy-toggle"]'
+    );
+    expect(fuzzyCheckbox).not.toBeNull();
+    expect(fuzzyCheckbox?.type).toBe("checkbox");
+    expect(fuzzyCheckbox?.checked).toBe(false);
+
+    editor.destroy();
+    container.remove();
+  });
+
+  it("finds fuzzy results via the search panel when fuzzy is checked", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const editor = createEditor({
+      container,
+      initialValue: "NexusEditor\nfloatboat\nnext editor",
+      plugins: [createSearchPlugin()],
+    });
+
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    content?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "f",
+        code: "KeyF",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    if (!container.querySelector('[data-test-id="markdown-search-bar"]')) {
+      content?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          code: "KeyF",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    }
+
+    const input = container.querySelector<HTMLInputElement>(
+      '[data-test-id="markdown-search-input"]'
+    );
+    const fuzzyCheckbox = container.querySelector<HTMLInputElement>(
+      '[data-test-id="markdown-search-fuzzy-toggle"]'
+    );
+    expect(input).not.toBeNull();
+    expect(fuzzyCheckbox).not.toBeNull();
+
+    fuzzyCheckbox!.checked = true;
+    fuzzyCheckbox!.dispatchEvent(new Event("change", { bubbles: true, cancelable: true }));
+    input!.value = "ft";
+    input!.dispatchEvent(new Event("input", { bubbles: true, cancelable: true }));
+    input!.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+
+    const selection = editor.getSelection();
+    expect(Math.min(selection.anchor, selection.head)).toBe(12);
+    expect(Math.max(selection.anchor, selection.head)).toBe(17);
+
+    editor.destroy();
+    container.remove();
+  });
+
+  it("supports localized fuzzy label", () => {
+    const container = document.createElement("div");
+    document.body.append(container);
+    const editor = createEditor({
+      container,
+      initialValue: "hello",
+      plugins: [
+        createSearchPlugin({
+          labels: {
+            fuzzy: "模糊",
+          },
+        }),
+      ],
+    });
+
+    const content = container.querySelector<HTMLElement>(".cm-content");
+    content?.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "f",
+        code: "KeyF",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+    );
+    if (!container.querySelector('[data-test-id="markdown-search-bar"]')) {
+      content?.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "f",
+          code: "KeyF",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+    }
+
+    const fuzzyLabel = container.querySelector<HTMLInputElement>(
+      '[data-test-id="markdown-search-fuzzy-toggle"]'
+    )?.parentElement;
+    expect(fuzzyLabel?.textContent).toBe("模糊");
+
+    editor.destroy();
+    container.remove();
+  });
+
   it("falls back to default tooltip labels when localized labels are blank", () => {
     const container = document.createElement("div");
     document.body.append(container);
