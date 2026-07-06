@@ -901,7 +901,10 @@ describe("fuzzy scoring — findScoredFuzzyMatches", () => {
     // "my_fancy_function": m(y)_f(a)n(c)y_...
     // The camelCase one should score well due to boundary bonuses
     expect(results.length).toBeGreaterThanOrEqual(1);
-    expect(results[0].matchedIndices !== undefined);
+    // Note: matchedIndices is intentionally omitted from ScoredSearchMatch;
+    // use findDetailedFuzzyMatches if you need per-character position tracking.
+    expect(typeof results[0].score).toBe("number");
+    expect(results[0].score).toBeGreaterThanOrEqual(0);
   });
 
   it("applies gap penalty — closer chars score higher", () => {
